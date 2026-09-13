@@ -303,10 +303,10 @@ key.
 
 The seeded/demo plans are:
 
-  Plan               API Calls   AI Tokens   Monthly Price
-  ------ ----------- ----------- ---------------
-  Free         1,000     100,000             \$0
-  Pro                10      50,000            $20
+| Plan | API Calls | AI Tokens | Monthly Price |
+| :--- | ---: | ---: | ---: |
+| Free | 1,000 | 100,000 | $0 |
+| Pro | 10 | 50,000 | $20 |
 
 The seeded Pro plan intentionally uses a low API-call limit and a 50,000-token
 limit to make quota-boundary testing easy during local evaluation. The plan
@@ -658,17 +658,23 @@ delivery.
 
 Create `.env` from `.env.example`.
 
-Example local configuration:
+The supplied `.env.example` contains safe placeholders:
+
+``` env
+DATABASE_URL="postgresql://user:password@localhost:5433/dbname"
+STRIPE_SECRET_KEY="sk_test_placeholder"
+STRIPE_WEBHOOK_SECRET="whsec_placeholder"
+```
+
+For the included Docker Compose database, replace the database placeholder
+with:
 
 ``` env
 DATABASE_URL=postgresql://postgres:postgres@localhost:5433/metering_db
-STRIPE_SECRET_KEY=sk_test_your_key_here
-STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret_here
 ```
 
-The repository's `.env.example` uses safe placeholders. The Docker
-Compose configuration exposes PostgreSQL on host port `5433`, so the
-local `DATABASE_URL` should use port `5433`.
+Then provide your own Stripe **test-mode** secret key and webhook signing
+secret in `.env`. Never commit `.env`.
 
 The supplied `.env.example` contains placeholders only.
 
@@ -779,6 +785,8 @@ The command creates demo plans, a tenant, and an active subscription,
 then prints the tenant UUID.
 
 ### 8. Start FastAPI
+
+This is the single application run command listed in `capstone.yaml`:
 
 ``` powershell
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -1032,7 +1040,7 @@ Metering and webhook work is handled synchronously.
 
 **Status:** not implemented.
 
-### Dependency pinning
+### Dependency versions
 
 The repository includes a `requirements.txt` file containing the Python
 dependencies required by the application and test suite. The dependency
@@ -1088,7 +1096,9 @@ The FlyRank brief specifies these required repository files:
   -----------------------------------------------------------------------
 
 Before submitting, verify that all required submission files are
-committed to the public repository.
+committed to the public repository. The evaluator manifest in
+`capstone.yaml` points to the same run command, seed command, test command,
+base URL, and probe endpoints documented in this README.
 
 ------------------------------------------------------------------------
 
