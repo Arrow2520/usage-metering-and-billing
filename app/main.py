@@ -26,6 +26,6 @@ def generate_endpoint(
         idempotency_key=idempotency_key,
         requested_api_calls=1,
         requested_tokens=total_tokens,
-        token_breakdown=payload.simulated_usage.dict()
+        token_breakdown=payload.simulated_usage.model_dump()
     )
     return result
