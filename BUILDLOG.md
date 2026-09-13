@@ -6,7 +6,7 @@
 
 This project was developed as the FlyRank Backend Track Capstone: **Usage Metering & Billing Engine**.
 
-The core backend implementation was done independently, with AI assistance used selectively for areas where I needed to learn or understand unfamiliar tooling and for final documentation/formatting.
+The core backend implementation was done independently, with AI assistance used selectively: Gemini for learning the Stripe CLI/Dashboard workflow, ChatGPT for structuring the submission documentation, and Claude for a later review-and-fix pass on the finished implementation (see "Post-Submission Hardening Pass" below). Each tool's role is described separately rather than lumped together, since they were used differently.
 
 ## What I Built Myself
 
@@ -107,6 +107,70 @@ The project reinforced my understanding of:
 - Writing endpoint and integration tests.
 - Using AI as a debugging and learning tool rather than as a replacement for understanding the implementation.
 
+## Post-Submission Hardening Pass (Claude)
+
+After drafting the initial README/EVIDENCE, I asked **Claude (Anthropic)**
+to review the finished repository against the capstone's Section 6
+requirements rather than just my own read of it. Claude read through
+`app/main.py`, `app/services.py`, `app/routers/stripe.py`, `app/models.py`,
+and the docs, and flagged four concrete gaps — three of which I had
+already named honestly in the original Limitations section but not yet
+fixed, plus one I hadn't caught:
+
+1. **Stripe webhook replay deduplication was missing.** Events were
+   signature-verified but never deduplicated by event ID, so a Stripe
+   retry or a manual redelivery would be reprocessed instead of ignored —
+   a requirement explicitly called out in the brief and tested by Probe 4.
+2. **`customer.subscription.updated` was logged but never persisted**, so
+   my local subscription status could silently drift from Stripe's real
+   status (e.g. a plan going `past_due`).
+3. **`/usage` wasn't scoped to the billing period.** It summed every usage
+   event ever recorded for a tenant, while the quota check in
+   `services.py` already scoped to `current_period_start`/
+   `current_period_end` — an inconsistency between the two code paths.
+4. **The Stripe Checkout Price ID was hardcoded** to a Price ID from my
+   own Stripe test account (`price_1UFHPuH4OiqotMa2FJnXCjNN`), which
+   would break for anyone cloning the repo and running it against their
+   own account — violating the "a stranger can run it" submission rule.
+
+**What Claude actually wrote:**
+- A new `StripeEvent` model + Alembic migration (`stripe_events` table)
+  keyed on Stripe's event `id`, and a check-and-insert block in the
+  webhook handler that returns `{"status": "ignored_duplicate_event"}`
+  on a replayed event ID instead of reprocessing it.
+- A DB write inside the `customer.subscription.updated` branch that syncs
+  the Stripe-reported status onto the matching local `Subscription` row.
+- A period filter added to the `/usage` query in `app/main.py`, matching
+  the same window already used in `services.py`.
+- Replaced the hardcoded Price ID with `STRIPE_PRICE_ID` read from the
+  environment, added it to `.env.example`, and added a 500 guard if it's
+  unset.
+- Pinned `requirements.txt` to specific versions instead of leaving it
+  unpinned.
+- Three new tests covering the above:
+  `tests/test_stripe.py::test_webhook_duplicate_event_id_is_ignored`,
+  `tests/test_stripe.py::test_webhook_subscription_updated_syncs_status`,
+  and `tests/test_usage_rollup.py::test_usage_excludes_events_outside_current_billing_period`,
+  written to match the existing fixture/mocking patterns in
+  `tests/conftest.py`.
+
+**What I did, not Claude:** I reviewed every diff against my own
+understanding of the schema and request flow before accepting it — in
+particular checking that the webhook dedup check only skips *processing*
+and still returns `200` (so Stripe doesn't keep retrying a legitimately
+handled event), and that the new `/usage` filter didn't change behavior
+for the existing idempotency/quota tests. I re-ran `pytest -v` against my
+live PostgreSQL test database after these changes and got **15 passed, 2
+warnings** — all three new tests passed and none of the original 12
+regressed. That output is recorded in `EVIDENCE.md` Section 7a.
+
+**Where I'd push back if evaluating this myself:** Claude's fixes were
+scoped tightly to the four gaps identified — it didn't refactor unrelated
+code, and it kept the existing code style (e.g. `print()` logging in the
+webhook handler) rather than introducing something inconsistent with the
+rest of the file. I asked it to explain each change before accepting it,
+which is the same standard I'd apply to a code review from a person.
+
 ## Honest Summary
 
 The backend architecture, database layer, metering logic, routes, and pytest coverage were implemented by me.
@@ -115,4 +179,6 @@ I used **Gemini heavily for learning and troubleshooting the Stripe CLI/Dashboar
 
 I used **ChatGPT for structuring and polishing the README.md and EVIDENCE.md**, starting from project information, raw inputs, and actual evidence supplied by me.
 
-AI therefore played an important supporting role, especially for Stripe and documentation, but the final project was reviewed, tested, and adapted against the actual implementation before submission.
+I used **Claude for a pre-submission review and hardening pass**: it read the finished repo against the capstone brief, found four real gaps (webhook replay dedup, `subscription.updated` not persisting, `/usage` not period-scoped, a hardcoded Stripe Price ID), and wrote the code and tests to fix them, which I reviewed before accepting. This is a different kind of AI involvement than the other two — Gemini and ChatGPT helped me learn and document *my own* implementation, while Claude authored specific fixes directly. I'm naming that distinction explicitly rather than blurring it into the same "AI helped" bucket.
+
+AI therefore played an important supporting role throughout — learning aid, documentation polish, and a code-level review/fix pass — but every change was reviewed, tested where possible, and adapted against the actual implementation before submission.

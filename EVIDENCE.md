@@ -366,6 +366,72 @@ endpoints:
 
 ---
 
+## 7a. Post-Submission Hardening (Webhook Replay, Subscription Sync, Usage Period)
+
+After the initial 12-passing-test run recorded above, three gaps flagged in
+the original Limitations section were fixed and covered with new tests:
+
+1. **Stripe webhook replay deduplication.** A `stripe_events` table now
+   stores every processed event `id` before handling. A second delivery of
+   the same event `id` short-circuits with `{"status":
+   "ignored_duplicate_event"}` instead of reprocessing it. Covered by
+   `tests/test_stripe.py::test_webhook_duplicate_event_id_is_ignored`,
+   which sends the identical mocked event twice and asserts the
+   subscription status is only mutated on the first delivery.
+2. **`customer.subscription.updated` synchronization.** The handler now
+   writes the Stripe-reported status onto the matching local
+   `Subscription` row instead of only logging it. Covered by
+   `tests/test_stripe.py::test_webhook_subscription_updated_syncs_status`.
+3. **`/usage` billing-period scoping.** The rollup query now filters
+   `UsageEvent.created_at` to the active subscription's
+   `current_period_start`/`current_period_end` window, matching the same
+   window `services.py` already used for quota enforcement. Covered by
+   `tests/test_usage_rollup.py::test_usage_excludes_events_outside_current_billing_period`.
+
+**Status of this evidence:** confirmed. The full suite was re-run locally
+against the live PostgreSQL test database after these changes:
+
+```text
+PS F:\Usage Metering and Billing Engine> pytest -v
+
+======================================================== test session starts =========================================================
+platform win32 -- Python 3.11.9, pytest-9.1.1, pluggy-1.6.0
+rootdir: F:\Usage Metering and Billing Engine
+plugins: anyio-4.15.1
+collected 15 items
+
+tests/test_idempotency.py::test_first_request_records_usage PASSED
+tests/test_idempotency.py::test_duplicate_request_is_deduplicated PASSED
+tests/test_quota.py::test_api_call_quota_returns_429 PASSED
+tests/test_quota.py::test_ai_token_quota_returns_429 PASSED
+tests/test_quota.py::test_inactive_subscription_returns_402[past_due] PASSED
+tests/test_quota.py::test_inactive_subscription_returns_402[canceled] PASSED
+tests/test_quota.py::test_inactive_subscription_returns_402[unpaid] PASSED
+tests/test_quota.py::test_inactive_subscription_returns_402[expired] PASSED
+tests/test_quota.py::test_inactive_subscription_returns_402[incomplete] PASSED
+tests/test_stripe.py::test_create_checkout_session_success PASSED
+tests/test_stripe.py::test_create_checkout_session_blocked_for_active_tenant PASSED
+tests/test_stripe.py::test_webhook_checkout_completed_updates_db PASSED
+tests/test_stripe.py::test_webhook_duplicate_event_id_is_ignored PASSED
+tests/test_stripe.py::test_webhook_subscription_updated_syncs_status PASSED
+tests/test_usage_rollup.py::test_usage_excludes_events_outside_current_billing_period PASSED
+
+========================================================== warnings summary ==========================================================
+.venv\Lib\site-packages\fastapi\testclient.py:1
+  StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+.venv\Lib\site-packages\starlette\testclient.py:53
+  DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+
+=================================================== 15 passed, 2 warnings in 4.51s ===================================================
+```
+
+All three new tests pass, and none of the original 12 regressed. The two
+warnings are pre-existing dependency deprecation notices from the
+FastAPI/Starlette test-client stack (same ones noted in Section 6 below)
+and do not indicate a failure.
+
+---
+
 ## 8. Evidence Summary
 
 The collected evidence demonstrates:
@@ -380,4 +446,4 @@ The collected evidence demonstrates:
 - Stripe test-mode checkout and webhook processing.
 - PostgreSQL persistence of subscription and Stripe state.
 - Automated regression coverage across metering, quotas, and Stripe integration.
-- A final automated test result of **12 passed**.
+- A final automated test result of **12 passed** at the original submission draft, and **15 passed** after the post-submission hardening pass (Section 7a) added webhook-replay, subscription-sync, and usage-period-scoping coverage.

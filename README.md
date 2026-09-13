@@ -58,8 +58,14 @@ webhooks.
 -   PostgreSQL persistence through SQLAlchemy and Alembic
 -   Stripe Checkout in test mode
 -   Stripe webhook signature verification
--   Automated tests for metering, quotas, subscription states, and
-    Checkout/webhook behavior
+-   Stripe webhook event-ID deduplication (replayed/duplicate
+    deliveries are recorded and ignored, not reprocessed)
+-   `customer.subscription.updated` status changes are synced to the
+    local subscription row, not just logged
+-   `/usage` rollups are scoped to the active subscription's current
+    billing period, matching the window the quota check enforces
+-   Automated tests for metering, quotas, subscription states, webhook
+    replay protection, and usage rollups
 -   Swagger/OpenAPI documentation through FastAPI
 
 ------------------------------------------------------------------------
@@ -499,8 +505,19 @@ customer.subscription.updated
 customer.subscription.deleted
 ```
 
+Every incoming event's Stripe `id` is recorded in a `stripe_events`
+table before it is handled. If the same event `id` is delivered again
+(Stripe retry, `stripe trigger` replay, or a manual redelivery from the
+Dashboard), the handler returns `{"status": "ignored_duplicate_event"}`
+without reprocessing it.
+
 `checkout.session.completed` updates the tenant's local subscription to
 `active` and stores the Stripe subscription ID.
+
+`customer.subscription.updated` syncs the tenant's local subscription
+`status` to whatever status Stripe reports (e.g. `active`, `past_due`,
+`unpaid`), so quota/subscription checks stay accurate between full
+Checkout flows.
 
 `customer.subscription.deleted` marks the matching local subscription as
 `canceled`.
@@ -664,7 +681,14 @@ The supplied `.env.example` contains safe placeholders:
 DATABASE_URL="postgresql://user:password@localhost:5433/dbname"
 STRIPE_SECRET_KEY="sk_test_placeholder"
 STRIPE_WEBHOOK_SECRET="whsec_placeholder"
+STRIPE_PRICE_ID="price_test_placeholder"
 ```
+
+`STRIPE_PRICE_ID` must be a **test-mode** Price ID from your own Stripe
+Dashboard (Products → your Pro product → pricing → copy the Price ID,
+starts with `price_...`). This keeps the repo runnable by anyone who
+clones it and configures their own Stripe test account, instead of
+depending on a Price ID from the original author's account.
 
 For the included Docker Compose database, replace the database placeholder
 with:
@@ -850,13 +874,35 @@ Run the full automated suite with:
 pytest -v
 ```
 
-The final recorded run completed with:
+The suite was re-run after the post-submission hardening pass (webhook
+replay dedup, subscription-status sync, usage-period scoping) and
+completed with:
 
 ``` text
-collected 12 items
+collected 15 items
 
-12 passed, 2 warnings in 6.10s
+tests/test_idempotency.py::test_first_request_records_usage PASSED
+tests/test_idempotency.py::test_duplicate_request_is_deduplicated PASSED
+tests/test_quota.py::test_api_call_quota_returns_429 PASSED
+tests/test_quota.py::test_ai_token_quota_returns_429 PASSED
+tests/test_quota.py::test_inactive_subscription_returns_402[past_due] PASSED
+tests/test_quota.py::test_inactive_subscription_returns_402[canceled] PASSED
+tests/test_quota.py::test_inactive_subscription_returns_402[unpaid] PASSED
+tests/test_quota.py::test_inactive_subscription_returns_402[expired] PASSED
+tests/test_quota.py::test_inactive_subscription_returns_402[incomplete] PASSED
+tests/test_stripe.py::test_create_checkout_session_success PASSED
+tests/test_stripe.py::test_create_checkout_session_blocked_for_active_tenant PASSED
+tests/test_stripe.py::test_webhook_checkout_completed_updates_db PASSED
+tests/test_stripe.py::test_webhook_duplicate_event_id_is_ignored PASSED
+tests/test_stripe.py::test_webhook_subscription_updated_syncs_status PASSED
+tests/test_usage_rollup.py::test_usage_excludes_events_outside_current_billing_period PASSED
+
+15 passed, 2 warnings in 4.51s
 ```
+
+The two warnings are the same pre-existing `httpx`/Starlette
+`TestClient` deprecation warnings noted below; they do not affect test
+results.
 
 The test suite covers:
 
@@ -884,6 +930,15 @@ The test suite covers:
 -   Checkout session creation succeeds
 -   active tenants are prevented from creating another Checkout session
 -   `checkout.session.completed` updates the local subscription
+-   a duplicate delivery of the same event `id` is ignored and does not
+    reprocess the event
+-   `customer.subscription.updated` syncs its Stripe status onto the
+    local subscription row
+
+### Usage rollups
+
+-   `/usage` excludes usage events recorded outside the active
+    subscription's current billing period
 
 The tests use a separate PostgreSQL test database:
 
@@ -909,11 +964,21 @@ The project's evidence document contains:
 -   final Pytest output
 -   FastAPI runtime evidence
 
-Recorded final test result:
+Recorded final test result at the original submission draft:
 
 ``` text
 12 passed, 2 warnings
 ```
+
+Three additional tests were added in a later hardening pass (webhook
+replay dedup, subscription-status sync, usage-period scoping) and the
+full suite was re-run, completing with:
+
+``` text
+15 passed, 2 warnings in 4.51s
+```
+
+See Section 14 for the full per-test breakdown of the re-run.
 
 Recorded live Stripe evidence includes successful forwarding of:
 
@@ -1000,31 +1065,6 @@ real payments, so Stripe test mode is sufficient.
 
 This section is intentionally explicit. The README should not claim that
 functionality exists when the current code does not implement it.
-
-### Stripe webhook replay deduplication
-
-The capstone brief requires duplicate Stripe events to be ignored. The
-current implementation verifies webhook signatures but does not persist
-Stripe event IDs for replay-safe deduplication.
-
-**Status:** hardening item / not fully implemented.
-
-### Subscription update synchronization
-
-`customer.subscription.updated` is currently logged but does not persist
-every Stripe status change to the local subscription row.
-`customer.subscription.deleted` is persisted as `canceled`.
-
-**Status:** partial implementation.
-
-### Usage-period filtering
-
-The current `/usage` implementation aggregates all persisted usage
-events for the tenant. It does not explicitly restrict the rollup to the
-active subscription's `current_period_start` / `current_period_end`
-window.
-
-**Status:** should be corrected for a production-grade monthly rollup.
 
 ### Authentication
 
@@ -1165,10 +1205,17 @@ The project has been exercised locally with:
 -   Stripe CLI webhook forwarding
 -   PostgreSQL subscription verification
 
-Recorded final automated result:
+Recorded final automated result at the original submission draft:
 
 ``` text
 12 passed, 2 warnings
+```
+
+Re-run after the post-submission hardening pass (webhook replay dedup,
+subscription-status sync, usage-period scoping):
+
+``` text
+15 passed, 2 warnings in 4.51s
 ```
 
 The FastAPI runtime was also observed successfully serving:
