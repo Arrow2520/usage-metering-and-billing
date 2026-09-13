@@ -714,11 +714,10 @@ source .venv/bin/activate
 
 ### 3. Install dependencies
 
-The current repository does not include a `requirements.txt` or
-`pyproject.toml`, so install the dependencies explicitly:
+Install all project dependencies from `requirements.txt`:
 
-``` powershell
-pip install fastapi uvicorn sqlalchemy psycopg2-binary python-dotenv stripe alembic pydantic pytest httpx
+```powershell
+pip install -r requirements.txt
 ```
 
 ### 4. Start PostgreSQL
