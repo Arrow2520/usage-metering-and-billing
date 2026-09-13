@@ -52,7 +52,11 @@ def get_tenant_usage(
     plan = db.query(Plan).filter(Plan.id == sub.plan_id).first()
 
     # 2. Fetch all usage events for this tenant
-    events = db.query(UsageEvent).filter(UsageEvent.tenant_id == x_tenant_id).all()
+    events = db.query(UsageEvent).filter(
+        UsageEvent.tenant_id == x_tenant_id,
+        UsageEvent.created_at >= sub.current_period_start,
+        UsageEvent.created_at <= sub.current_period_end
+    ).all()
 
     # 3. Aggregate totals and cost
     total_api_calls = 0

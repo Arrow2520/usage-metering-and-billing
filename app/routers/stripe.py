@@ -1,14 +1,16 @@
 import os
 import stripe
 from fastapi import APIRouter, Request, HTTPException, Depends, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Subscription  
+from app.models import Subscription, StripeEvent
 
 router = APIRouter()
 
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID")
 
 @router.post("/checkout")
 async def create_checkout_session(tenant_id: str, db: Session = Depends(get_db)):
@@ -23,11 +25,17 @@ async def create_checkout_session(tenant_id: str, db: Session = Depends(get_db))
             detail="Tenant already has an active subscription."
         )
 
+    if not STRIPE_PRICE_ID:
+        raise HTTPException(
+            status_code=500,
+            detail="STRIPE_PRICE_ID is not configured. Set it in .env to a test-mode Price ID."
+        )
+
     try:
         checkout_session = stripe.checkout.Session.create(
             line_items=[
                 {
-                    'price': 'price_1UFHPuH4OiqotMa2FJnXCjNN', 
+                    'price': STRIPE_PRICE_ID,
                     'quantity': 1,
                 },
             ],
@@ -62,7 +70,21 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     except stripe.error.SignatureVerificationError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
 
-    # 3. Handle specific event types
+    # 3. Replay / duplicate-delivery protection.
+    # Stripe may deliver the same event more than once (retries, manual
+    # replays via `stripe trigger` or the Dashboard). We record every
+    # event ID we've processed and skip anything we've already handled.
+    event_id = event.get('id') if isinstance(event, dict) else getattr(event, 'id', None)
+    if event_id:
+        try:
+            db.add(StripeEvent(id=event_id, event_type=event['type']))
+            db.commit()
+        except IntegrityError:
+            # Already processed this exact event ID - ignore the replay.
+            db.rollback()
+            return {"status": "ignored_duplicate_event"}
+
+    # 4. Handle specific event types
     event_type = event['type']
     
     if event_type == 'checkout.session.completed':
@@ -89,6 +111,18 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         sub_id = subscription.get('id')
         
         print(f"Subscription updated! ID: {sub_id} | New Status: {stripe_status}")
+
+        # Mirror Stripe's status onto the local row so states like
+        # past_due, unpaid, or a plan resume are reflected locally instead
+        # of only being logged.
+        if sub_id and stripe_status:
+            db_sub = db.query(Subscription).filter(
+                Subscription.stripe_subscription_id == sub_id
+            ).first()
+            if db_sub:
+                db_sub.status = stripe_status
+                db.commit()
+                print(f"Subscription {sub_id} status synced to '{stripe_status}' in database.")
 
     elif event_type == 'customer.subscription.deleted':
         subscription = event['data']['object'].to_dict()

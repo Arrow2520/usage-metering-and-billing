@@ -46,3 +46,14 @@ class UsageEvent(Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "idempotency_key", name="uq_tenant_idempotency"),
     )
+
+class StripeEvent(Base):
+    """
+    Records every processed Stripe webhook event ID so replayed/duplicate
+    deliveries (Stripe retries, `stripe trigger` replays, etc.) are
+    recognized and skipped instead of being reprocessed.
+    """
+    __tablename__ = "stripe_events"
+    id = Column(String, primary_key=True)
+    event_type = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
