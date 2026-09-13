@@ -31,8 +31,8 @@ def seed_db():
     db.add(sub)
     db.commit()
 
-    print(f"\n✅ Seed successful!")
-    print(f"👉 Copy this Tenant ID for your tests: {test_tenant.id}\n")
+    print(f"\nSeed successful!")
+    print(f"Copy this Tenant ID for your tests: {test_tenant.id}\n")
     db.close()
 
 if __name__ == "__main__":

@@ -3,8 +3,10 @@ from app.schemas import TokenUsage, GenerateRequest
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.services import check_quota_and_record_usage
+from app.routers.stripe import router
 
 app = FastAPI(title="Usage Metering Engine")
+app.include_router(router)
 
 @app.post("/generate", status_code=status.HTTP_200_OK)
 def generate_endpoint(
