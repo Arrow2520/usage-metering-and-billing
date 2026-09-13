@@ -12,7 +12,7 @@ endpoints:
     path: /usage
     description: Return tenant usage totals, quota limits, and calculated cost.
 
-  - method: GET
+  - method: POST
     path: /checkout
     description: Create a Stripe Checkout subscription session for a tenant.
 

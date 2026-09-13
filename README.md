@@ -178,6 +178,10 @@ through Docker, Stripe test mode, Stripe CLI, and simulated AI usage.
 
 ## 4. Repository Structure
 
+The repository also includes the evaluator manifest `capstone.yaml`, the
+AI/build log `BUILDLOG.md`, the evidence file `EVIDENCE.md`, and the Python
+dependency manifest `requirements.txt`.
+
 ``` text
 .
 ├── app/
@@ -208,6 +212,9 @@ through Docker, Stripe test mode, Stripe CLI, and simulated AI usage.
 ├── docker-compose.yml
 ├── alembic.ini
 ├── .env.example
+├── requirements.txt
+├── capstone.yaml
+├── BUILDLOG.md
 ├── Database Design.pdf
 ├── EVIDENCE.md
 ├── LICENSE
@@ -296,10 +303,14 @@ key.
 
 The seeded/demo plans are:
 
-  Plan     API Calls   AI Tokens   Monthly Price
+  Plan               API Calls   AI Tokens   Monthly Price
   ------ ----------- ----------- ---------------
   Free         1,000     100,000             \$0
-  Pro         10,000   5,000,000            \$20
+  Pro                10      50,000            $20
+
+The seeded Pro plan intentionally uses a low API-call limit and a 50,000-token
+limit to make quota-boundary testing easy during local evaluation. The plan
+price is stored as 2,000 cents.
 
 The system checks current usage before accepting a billable action.
 
@@ -655,6 +666,10 @@ STRIPE_SECRET_KEY=sk_test_your_key_here
 STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret_here
 ```
 
+The repository's `.env.example` uses safe placeholders. The Docker
+Compose configuration exposes PostgreSQL on host port `5433`, so the
+local `DATABASE_URL` should use port `5433`.
+
 The supplied `.env.example` contains placeholders only.
 
 ### Secret hygiene
@@ -766,7 +781,7 @@ then prints the tenant UUID.
 ### 8. Start FastAPI
 
 ``` powershell
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 The API is available at:
@@ -1017,12 +1032,20 @@ Metering and webhook work is handled synchronously.
 
 **Status:** not implemented.
 
-### Dependency lockfile
+### Dependency pinning
 
-The repository does not currently include `requirements.txt` or
-`pyproject.toml`.
+The repository includes a `requirements.txt` file containing the Python
+dependencies required by the application and test suite. The dependency
+versions are currently unpinned.
 
-**Status:** reproducibility improvement recommended.
+Install them with:
+
+``` powershell
+pip install -r requirements.txt
+```
+
+**Status:** dependency manifest implemented; exact version pinning is
+not currently used.
 
 ### Production billing features
 
@@ -1060,10 +1083,12 @@ The FlyRank brief specifies these required repository files:
 
   `.env.example`                      Safe environment-variable
                                       placeholders
+
+  `requirements.txt`                  Python dependency manifest
   -----------------------------------------------------------------------
 
-Before submitting, verify that all five files are committed to the
-public repository.
+Before submitting, verify that all required submission files are
+committed to the public repository.
 
 ------------------------------------------------------------------------
 
@@ -1096,7 +1121,7 @@ python seed.py
 Start FastAPI:
 
 ``` powershell
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Run tests:
@@ -1143,6 +1168,7 @@ GET  /docs
 GET  /openapi.json
 POST /generate
 GET  /usage
+POST /checkout
 POST /webhooks/stripe
 ```
 
@@ -1172,6 +1198,7 @@ Before submitting the public repository:
 -   [ ] `BUILDLOG.md` is present
 -   [ ] `capstone.yaml` is present
 -   [ ] `.env.example` is present
+-   [ ] `requirements.txt` is present and installation is documented
 -   [ ] `.env` is ignored and not committed
 -   [ ] no Stripe secrets are committed
 -   [ ] `pytest -v` passes
